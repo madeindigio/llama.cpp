@@ -764,3 +764,28 @@ ggml_opt_dataset_t common_opt_dataset_init(struct llama_context * ctx, const std
 
 // "adamw" or "sgd" (case insensitive)
 enum ggml_opt_optimizer_type common_opt_get_optimizer(const char *);
+
+//
+// go-llama.cpp bindings
+//
+
+struct llama_binding_state {
+    llama_model_ptr model;
+    llama_context_ptr context;
+    std::vector<llama_adapter_lora_ptr> lora;
+    common_params * params;  // Keep params alive for the lifetime of the model
+};
+
+void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity);
+
+// Disabled for embeddings-only builds - sampling API has changed in newer llama.cpp
+#if 0
+llama_token llama_sample_token_binding(
+                  struct llama_context * ctx,
+                  struct llama_context * ctx_guidance,
+                  struct llama_grammar * grammar,
+               const struct gpt_params * g_params,
+        const std::vector<llama_token> & last_tokens,
+         std::vector<llama_token_data> & candidates,
+                                   int   idx = 0);
+#endif

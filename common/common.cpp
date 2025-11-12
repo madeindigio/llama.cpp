@@ -1628,3 +1628,110 @@ float lr_opt::get_lr(float epoch) const {
     LOG_INF("epoch %.2g lr=%.2g\n", epoch, r);
     return r;
 }
+
+//
+// go-llama.cpp custom bindings
+//
+
+common_params* create_common_params(const std::string& fname,const std::string& lora,const std::string& lora_base) {
+   common_params* lparams = new common_params;
+    fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
+
+    // Initialize the 'model' member with the 'fname' parameter
+    lparams->model.path = fname;
+    // Note: lora_adapters is now a vector of common_adapter_lora_info
+    if (!lora.empty()) {
+        common_adapter_lora_info lora_info;
+        lora_info.path = lora;
+        lora_info.scale = 1.0f;
+        lparams->lora_adapters.push_back(lora_info);
+        lparams->use_mmap = false;
+    }
+    return lparams;
+}
+
+common_params* create_common_params_cuda(const std::string& fname) {
+   common_params* lparams = new common_params;
+    fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
+
+    // Initialize the 'model' member with the 'fname' parameter
+    lparams->model.path = fname;
+    return lparams;
+}
+
+void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
+    // load the model
+    common_params * lparams;
+// Temporary workaround for https://github.com/go-skynet/go-llama.cpp/issues/218
+#ifdef GGML_USE_CUBLAS
+    lparams = create_common_params_cuda(fname);
+#else
+    lparams = create_common_params(fname, lora, lora_base);
+#endif
+    
+    llama_binding_state * state;
+    state = new llama_binding_state;
+    state->params = lparams;  // Store params to keep them alive
+    state->model = nullptr;
+    state->context = nullptr;
+    
+    lparams->n_ctx      = n_ctx;
+    lparams->sampling.seed = n_seed;
+    // Note: memory_f16, perplexity, and low_vram removed in newer API
+    lparams->embedding  = embeddings;
+    lparams->use_mlock  = mlock;
+    lparams->n_gpu_layers = n_gpu_layers;
+    lparams->use_mmap = mmap;
+    if (rope_freq_base != 0.0f) {
+        lparams->rope_freq_base = rope_freq_base;
+    } else {
+        lparams->rope_freq_base = 10000.0f;
+    }
+
+    if (rope_freq_scale != 0.0f) {
+        lparams->rope_freq_scale = rope_freq_scale;
+    } else {
+        lparams->rope_freq_scale =  1.0f;
+    }
+
+    lparams->model.path = fname;
+    if (maingpu[0] != '\0') {
+        lparams->main_gpu = std::stoi(maingpu);
+    }
+
+    if (tensorsplit[0] != '\0') {
+        std::string arg_next = tensorsplit;
+            // split string by , and /
+            const std::regex regex{R"([,/]+)"};
+            std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
+            std::vector<std::string> split_arg{it, {}};
+            GGML_ASSERT(split_arg.size() <= 128); // tensor_split array size
+
+            for (size_t i = 0; i < 128; ++i) {
+                if (i < split_arg.size()) {
+                    lparams->tensor_split[i] = std::stof(split_arg[i]);
+                } else {
+                    lparams->tensor_split[i] = 0.0f;
+                }
+            }
+    }
+
+    lparams->n_batch      = n_batch;
+
+    llama_backend_init();
+    
+    common_init_result llama_init = common_init_from_params(*lparams);
+    
+    if (llama_init.model == nullptr) {
+        fprintf(stderr, "%s: error: unable to load model\n", __func__);
+        delete state->params;
+        delete state;
+        return nullptr;
+    }
+    
+    state->model = std::move(llama_init.model);
+    state->context = std::move(llama_init.context);
+    state->lora = std::move(llama_init.lora);
+    
+    return state;
+}
